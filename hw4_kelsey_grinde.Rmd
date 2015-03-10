@@ -1,0 +1,203 @@
+---
+title: "BIOST 578 - HW4"
+author: "Kelsey Grinde"
+date: "3/5/2015"
+output: html_document
+---
+
+# Instructions:
+The goal of this assignment is to analyze the RNA-seq data in the following paper:
+
+Henn, A. D. et al. High-resolution temporal response patterns to influenza vaccine reveal a distinct human plasma cell gene signature. Scientific Reports 3, 2327 (2013).
+
+# Set Up
+First we'll download and/or install the necessary packages.
+
+```{r download-packages, cache = T}
+suppressMessages(library(data.table))
+suppressMessages(library(limma))
+suppressMessages(library(edgeR))
+suppressMessages(library(GEOquery))
+suppressMessages(library(pheatmap))
+suppressMessages(library(GSEABase))
+suppressMessages(library(BiocInstaller))
+```
+
+# Get the data:
+First we need to get the data from GEO. This code is taken from the class lecture slides.
+
+```{r get-data, cache = T}
+# get data, send to Data/GEO folder
+gd <- getGEO("GSE45735", destdir = "Data/GEO/")
+# get sample data
+pd <- pData(gd[[1]])
+# get supplementary files
+getGEOSuppFiles("GSE45735", makeDirectory = FALSE, baseDir = "Data/GEO/")
+
+## Do some clean-up
+files <- list.files(path = "Data/GEO/", pattern = "GSE45735_T.*.gz", 
+    full.names = TRUE)
+# Read in gzipped, tab-delim supplementary files
+file_list <- lapply(files, read.table, sep = "\t", header = TRUE)
+# Subset to only rows where gene contains only
+# non-space characters This addresses problems with T14 file
+# containing 28 invalid rows at end of file
+file_list <- lapply(file_list, function(file_list) subset(file_list, 
+    grepl("^[^[:space:]]+$", Gene)))
+# Remove duplicated rows
+file_list_unique <- lapply(file_list, function(x) {
+    x <- x[!duplicated(x$Gene), ]
+    x <- x[order(x$Gene), ]
+    rownames(x) <- x$Gene
+    x[, -1]
+})
+# Take the intersection of all genes
+gene_list <- Reduce(intersect, lapply(file_list_unique, rownames))
+file_list_unique <- lapply(file_list_unique, "[", gene_list, )
+matrix <- as.matrix(do.call(cbind, file_list_unique))
+# Clean up the pData, too
+pd_small <- pd[!grepl("T13_Day8", pd$title), ]
+pd_small$Day <- sapply(strsplit(gsub(" \\[PBMC\\]", "", pd_small$title), 
+    "_"), "[", 2)
+pd_small$subject <- sapply(strsplit(gsub(" \\[PBMC\\]", "", pd_small$title), 
+    "_"), "[", 1)
+colnames(matrix) <- rownames(pd_small)
+```
+
+# Use `voom` and `limma` to find differentially expressed genes
+Now we will look for genes that are differentially expressed at each time point compared to baseline using `voom` and `limma`. We'll control FDR at a cutoff of 0.01. This code is largely inspired by code from the class lecture slides.
+
+```{r voom, cache = T}
+# creat an eSet, add one to the count
+new_set <- ExpressionSet(assayData = matrix + 1)
+pData(new_set) <- pd_small
+
+# set up design matrix
+design <- model.matrix(~subject + Day, new_set)
+
+# run voom
+new_set_voom <- voom(new_set, design = design)
+
+# fit LIMMA
+lm <- lmFit(new_set_voom, design)
+
+# get moderated t-stats
+eb <- eBayes(lm)
+
+# look for differentially expressed genes at day 1, FDR 0.01
+top_day1 <- topTable(eb, coef = "DayDay1", number = Inf, adjust.method="BH", 
+                     p.value = 0.01,sort.by='none')
+# at Day 2
+top_day2 <- topTable(eb, coef = "DayDay2", number = Inf, adjust.method="BH", p.value = 0.01)
+# at Day 3
+top_day3 <- topTable(eb, coef = "DayDay3", number = Inf, adjust.method="BH", p.value = 0.01)
+# at Day 4
+top_day4 <- topTable(eb, coef = "DayDay4", number = Inf, adjust.method="BH", p.value = 0.01)
+# at Day 5
+top_day5 <- topTable(eb, coef = "DayDay5", number = Inf, adjust.method="BH", p.value = 0.01)
+# at Day 6
+top_day6 <- topTable(eb, coef = "DayDay6", number = Inf, adjust.method="BH", p.value = 0.01)
+# at Day 7
+top_day7 <- topTable(eb, coef = "DayDay7", number = Inf, adjust.method="BH", p.value = 0.01)
+# at Day 8
+top_day8 <- topTable(eb, coef = "DayDay8", number = Inf, adjust.method="BH", p.value = 0.01)
+# at Day 9
+top_day9 <- topTable(eb, coef = "DayDay9", number = Inf, adjust.method="BH", p.value = 0.01)
+# at Day 10
+top_day10 <- topTable(eb, coef = "DayDay10", number = Inf, adjust.method="BH", p.value = 0.01)
+```
+
+When controlling FDR at a cutoff of 0.01, we find no significantly differentially expressed genes at days 2, 4, 5, 6, 7, 8, 9, or 10. At day 1 we find `r nrow(top_day1)` significantly differentially expressed genes and at day 3 we find `r nrow(top_day3)`.
+
+# Display results using `pheatmap`
+Then we will display our results using `pheatmap` to show the log-fold-change for the differentially expressed genes, grouped by time point. I restrict the figure to only showing the log fold changes for the 58 genes that were significantly differentially expressed at Day 1.
+
+```{r pheatmap, cache = T}
+# log fold change for all days, with just the genes significantly DE at day 1 
+day1 <- top_day1$logFC
+day2 <- topTable(eb, coef = "DayDay2", number = Inf, adjust.method = "BH",sort.by='none')
+day2 <- subset(day2, rownames(day2) %in% rownames(top_day1))
+day3 <- topTable(eb, coef = "DayDay3", number = Inf, adjust.method="BH",sort.by='none')
+day3 <- subset(day3, rownames(day3) %in% rownames(top_day1))
+day4 <- topTable(eb, coef = "DayDay4", number = Inf, adjust.method="BH",sort.by='none')
+day4 <- subset(day4, rownames(day4) %in% rownames(top_day1))
+day5 <- topTable(eb, coef = "DayDay5", number = Inf, adjust.method="BH",sort.by='none')
+day5 <- subset(day5, rownames(day5) %in% rownames(top_day1))
+day6 <- topTable(eb, coef = "DayDay6", number = Inf, adjust.method="BH",sort.by='none')
+day6 <- subset(day6, rownames(day6) %in% rownames(top_day1))
+day7 <- topTable(eb, coef = "DayDay7", number = Inf, adjust.method="BH",sort.by='none')
+day7 <- subset(day7, rownames(day7) %in% rownames(top_day1))
+day8 <- topTable(eb, coef = "DayDay8", number = Inf, adjust.method="BH",sort.by='none')
+day8 <- subset(day8, rownames(day8) %in% rownames(top_day1))
+day9 <- topTable(eb, coef = "DayDay9", number = Inf, adjust.method="BH",sort.by='none')
+day9 <- subset(day9, rownames(day9) %in% rownames(top_day1))
+day10 <- topTable(eb, coef = "DayDay10", number = Inf, adjust.method="BH",sort.by='none')
+day10 <- subset(day10, rownames(day10) %in% rownames(top_day1))
+
+# get log fold changes into matrix so we can make heat map
+lfc_matrix <- matrix(NA,nrow=58,ncol=10)
+lfc_matrix[,1] <- day1
+lfc_matrix[,2] <- day2$logFC
+lfc_matrix[,3] <- day3$logFC
+lfc_matrix[,4] <- day4$logFC
+lfc_matrix[,5] <- day5$logFC
+lfc_matrix[,6] <- day6$logFC
+lfc_matrix[,7] <- day7$logFC
+lfc_matrix[,8] <- day8$logFC
+lfc_matrix[,9] <- day9$logFC
+lfc_matrix[,10] <- day10$logFC
+colnames(lfc_matrix) <- paste('Day',1:10,sep= '')
+rownames(lfc_matrix) <- rownames(top_day1)
+
+# make heatmap using pheatmap
+pheatmap(lfc_matrix,cluster_cols = F,fontsize_row = 7)
+```
+
+# Perform GSEA
+Finally we will perform a GSEA analysis using `camera` and the MSigDB Reactome pathway gene signatures. This code is taken from the lecture slides from class.
+
+First we convert the gene sets into gene indices. I got the `c2.all.v4.0.symbols.gmt` file from the BIOST-578 class repo. Then we specify our contrasts.
+```{r gsea, cache = T}
+## Get gene indices
+c2_set <- getGmt("GSEA-sets/c2.all.v4.0.symbols.gmt")
+gene_ids <- geneIds(c2_set)
+# Camera requires gene-indices.  Which function to use will
+# depend on which version of limma you have.
+# http://bioconductor.org/packages/release/bioc/news/limma/NEWS
+# 'symbols2indices() renamed to ids2indices().'
+library(limma)
+if (exists("ids2indices")) {
+    sets_indices <- ids2indices(gene_ids, rownames(new_set))
+}
+if (exists("symbols2indices")) {
+    sets_indices <- symbols2indices(gene_ids, rownames(new_set))
+}
+
+## Make contrasts
+# Note that camera works on voom objects
+res <- vector("list", length = 10)
+for (i in 1:10) {
+    contrast <- paste0("DayDay", i)
+    cont_matrix <- makeContrasts(contrast, levels = design)
+    res[[i]] <- camera(new_set_voom, sets_indices, design = design, 
+        contrast = cont_matrix, sort = FALSE)
+}
+```
+
+# Display results using pheatmap
+We will also display our GSEA results using `pheatmap`, again grouping results by timepoint in the heat map.
+
+```{r gsea-heatmap, cache= T}
+PValue <- sapply(res, function(x) {
+    ifelse(x$Direction == "Up", -10 * log10(x$PValue), 10 * log10(x$PValue))
+})
+rownames(PValue) <- rownames(res[[1]])
+PValue_max <- rowMax(abs(PValue))
+PValue_small <- PValue[PValue_max > 30, ]
+anno <- data.frame(Time = paste0("Day", 1:10))
+rownames(anno) <- colnames(PValue_small) <- paste0("Day", 1:10)
+
+# reproduce figure in lecture notes
+colnames(PValue_small) <- paste0("Day",1:10)
+pheatmap(PValue_small,cluster_cols = F,fontsize_row=5)
+```
